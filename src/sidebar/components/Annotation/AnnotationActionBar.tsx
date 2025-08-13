@@ -6,6 +6,8 @@ import {
   FlagFilledIcon,
   ReplyIcon,
   TrashIcon,
+  ArrowUpIcon,
+  ArrowDownIcon,
 } from '@hypothesis/frontend-shared';
 
 import type { SavedAnnotation } from '../../../types/api';
@@ -69,6 +71,44 @@ function AnnotationActionBar({
     !!userProfile.userid &&
     userProfile.userid !== annotation.user;
 
+
+// === Like / Dislike State & Helpers ===
+  const tags = annotation.tags || [];
+  const likePrefix = `vote:like:`;
+  const dislikePrefix = `vote:dislike:`;
+  const userId = userProfile.userid;
+  const userLikeTag = tags.find(t => t.startsWith(`${likePrefix}${userId}`));
+  const userDislikeTag = tags.find(t => t.startsWith(`${dislikePrefix}${userId}`));
+  const likeCount = tags.filter(t => t.startsWith(likePrefix)).length;
+  const dislikeCount = tags.filter(t => t.startsWith(dislikePrefix)).length;
+
+  const handleVote = async (type: 'like' | 'dislike') => {
+    if (!isLoggedIn) {
+      store.openSidebarPanel('loginPrompt');
+      return;
+    }
+    const otherType = type === 'like' ? 'dislike' : 'like';
+    const newTags = tags.filter(
+      t =>
+        !t.startsWith(`vote:${type}:${userId}`) &&
+        !t.startsWith(`vote:${otherType}:${userId}`)
+    );
+    const timestamp = Math.floor(Date.now() / 1000);
+
+    // Toggle: if already voted same type, remove; else add new
+    const alreadyVotedSameType =
+      type === 'like' ? !!userLikeTag : !!userDislikeTag;
+    if (!alreadyVotedSameType) {
+      newTags.push(`vote:${type}:${userId}:${timestamp}`);
+    }
+
+    try {
+      await annotationsService.save({ ...annotation, tags: newTags });
+    } catch (err) {
+      toastMessenger.error(`Failed to ${type} annotation`);
+    }
+  };    
+
   const onDelete = async () => {
     const annType = annotationRole(annotation);
     if (
@@ -112,8 +152,25 @@ function AnnotationActionBar({
 
   const showShareAction = sharingEnabled(settings);
 
+  const likeAction = () => {
+
+  }
+
   return (
     <div className="flex text-[16px]" data-testid="annotation-action-bar">
+     <IconButton
+        icon={ArrowUpIcon}
+        title={`Like (${likeCount})`}
+        pressed={!!userLikeTag}
+        onPointerUp={() => handleVote('like')}
+        {likeCount}
+      />
+      <IconButton
+        icon={ArrowDownIcon}
+        title={`Dislike (${dislikeCount})`}
+        pressed={!!userDislikeTag}
+        onPointerDown={() => handleVote('dislike')}
+      />
       {showEditAction && (
         <IconButton icon={EditIcon} title="Edit" onClick={onEdit} />
       )}
