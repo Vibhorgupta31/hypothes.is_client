@@ -163,14 +163,15 @@ function AnnotationActionBar({
         title={`Like (${likeCount})`}
         pressed={!!userLikeTag}
         onPointerUp={() => handleVote('like')}
-        {likeCount}
       />
+      <span>{likeCount}</span>
       <IconButton
         icon={ArrowDownIcon}
         title={`Dislike (${dislikeCount})`}
         pressed={!!userDislikeTag}
         onPointerDown={() => handleVote('dislike')}
       />
+      <span>{dislikeCount}</span>
       {showEditAction && (
         <IconButton icon={EditIcon} title="Edit" onClick={onEdit} />
       )}
