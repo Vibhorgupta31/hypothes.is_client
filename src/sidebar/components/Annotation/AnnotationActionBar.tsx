@@ -7,7 +7,7 @@ import {
   ReplyIcon,
   TrashIcon,
   ArrowUpIcon,
-  ArrowDownIcon,
+  ArrowDownIcon
 } from '@hypothesis/frontend-shared';
 
 import type { SavedAnnotation } from '../../../types/api';
@@ -22,6 +22,11 @@ import type { ToastMessengerService } from '../../services/toast-messenger';
 import { useSidebarStore } from '../../store';
 import AnnotationShareControl from './AnnotationShareControl';
 
+// --- added for voting feature ---
+import { privatePermissions, sharedPermissions } from '../../helpers/permissions';
+
+
+
 function flaggingEnabled(settings: SidebarSettings) {
   const service = serviceConfig(settings);
   if (service?.allowFlagging === false) {
@@ -32,7 +37,11 @@ function flaggingEnabled(settings: SidebarSettings) {
 
 export type AnnotationActionBarProps = {
   annotation: SavedAnnotation;
-  onReply: () => void;
+
+  // --- added for voting feature ---
+  // Allow optional params so we can pass tags through without changing callers.
+  onReply: (annotation?: SavedAnnotation, text?: string, tags?: string[]) => void;
+  // --- end voting feature ---
 
   // injected
   annotationsService: AnnotationsService;
@@ -57,6 +66,49 @@ function AnnotationActionBar({
   const userProfile = store.profile();
   const isLoggedIn = store.isLoggedIn();
 
+ // --- added for voting feature ---
+  // Only allow voting on top-level annotations (not replies)
+  const isReply =
+    Array.isArray(annotation.references) && annotation.references.length > 0;
+
+  const onVote = async (type: 'like' | 'dislike') => {
+    if (!isLoggedIn) {
+      store.openSidebarPanel('loginPrompt');
+      return;
+    }
+
+    try {
+      const userid = userProfile.userid!;
+      // Build a reply annotation object directly, with correct permissions, references and tags.
+      const voteTags = [
+        `vote:${type}`,
+        `user:${userid}`,
+        `timestamp:${new Date().toISOString()}`,
+      ];
+
+      const replyAnn = annotationsService.annotationFromData({
+        // Make this a reply to the current annotation
+        references: (annotation.references || []).concat(annotation.id),
+        // Put it in the same group and thread context
+        group: annotation.group,
+        uri: annotation.uri,
+        target: [{ source: annotation.target[0]?.source }],
+        // No body text for votes; tags carry the info
+        text: '',
+        tags: voteTags,
+        // Match parent visibility: shared vs private
+        permissions: !isPrivate(annotation.permissions)
+          ? sharedPermissions(userid, annotation.group)
+          : privatePermissions(userid),
+      });
+
+      await annotationsService.save(replyAnn);
+    } catch (err: any) {
+      toastMessenger.error(err?.message ?? 'Failed to record vote');
+    }
+  };
+  // --- end voting feature ---
+
   // Is the current user allowed to take the given `action` on this annotation?
   const userIsAuthorizedTo = (action: 'update' | 'delete') => {
     return permits(annotation.permissions, action, userProfile.userid);
@@ -71,44 +123,6 @@ function AnnotationActionBar({
     !!userProfile.userid &&
     userProfile.userid !== annotation.user;
 
-
-// === Like / Dislike State & Helpers ===
-  const tags = annotation.tags || [];
-  const likePrefix = `vote:like:`;
-  const dislikePrefix = `vote:dislike:`;
-  const userId = userProfile.userid;
-  const userLikeTag = tags.find(t => t.startsWith(`${likePrefix}${userId}`));
-  const userDislikeTag = tags.find(t => t.startsWith(`${dislikePrefix}${userId}`));
-  const likeCount = tags.filter(t => t.startsWith(likePrefix)).length;
-  const dislikeCount = tags.filter(t => t.startsWith(dislikePrefix)).length;
-
-  const handleVote = async (type: 'like' | 'dislike') => {
-    if (!isLoggedIn) {
-      store.openSidebarPanel('loginPrompt');
-      return;
-    }
-    const otherType = type === 'like' ? 'dislike' : 'like';
-    const newTags = tags.filter(
-      t =>
-        !t.startsWith(`vote:${type}:${userId}`) &&
-        !t.startsWith(`vote:${otherType}:${userId}`)
-    );
-    const timestamp = Math.floor(Date.now() / 1000);
-
-    // Toggle: if already voted same type, remove; else add new
-    const alreadyVotedSameType =
-      type === 'like' ? !!userLikeTag : !!userDislikeTag;
-    if (!alreadyVotedSameType) {
-      newTags.push(`vote:${type}:${userId}:${timestamp}`);
-    }
-
-    try {
-      await annotationsService.save({ ...annotation, tags: newTags });
-    } catch (err) {
-      toastMessenger.error(`Failed to ${type} annotation`);
-    }
-  };    
-
   const onDelete = async () => {
     const annType = annotationRole(annotation);
     if (
@@ -121,7 +135,7 @@ function AnnotationActionBar({
       try {
         await annotationsService.delete(annotation);
         toastMessenger.success(`${annType} deleted`, { visuallyHidden: true });
-      } catch (err) {
+      } catch (err: any) {
         toastMessenger.error(err.message);
       }
     }
@@ -152,32 +166,29 @@ function AnnotationActionBar({
 
   const showShareAction = sharingEnabled(settings);
 
-  const likeAction = () => {
-
-  }
-
   return (
     <div className="flex text-[16px]" data-testid="annotation-action-bar">
-     <IconButton
-        icon={ArrowUpIcon}
-        title={`Like (${likeCount})`}
-        pressed={!!userLikeTag}
-        onPointerUp={() => handleVote('like')}
-      />
-      <span>{likeCount}</span>
-      <IconButton
-        icon={ArrowDownIcon}
-        title={`Dislike (${dislikeCount})`}
-        pressed={!!userDislikeTag}
-        onPointerDown={() => handleVote('dislike')}
-      />
-      <span>{dislikeCount}</span>
       {showEditAction && (
         <IconButton icon={EditIcon} title="Edit" onClick={onEdit} />
       )}
       {showDeleteAction && (
         <IconButton icon={TrashIcon} title="Delete" onClick={onDelete} />
       )}
+
+      {/* --- added for voting feature ---
+          Place Like/Dislike buttons just BEFORE the Reply button */}
+      <IconButton
+        icon={ArrowUpIcon}
+        title="Like"
+        onClick={() => onVote('like')}
+      />
+      <IconButton
+        icon={ArrowDownIcon}
+        title="Dislike"
+        onClick={() => onVote('dislike')}
+      />
+      {/* --- end voting feature --- */}
+
       <IconButton icon={ReplyIcon} title="Reply" onClick={onReplyClick} />
       {showShareAction && <AnnotationShareControl annotation={annotation} />}
       {showFlagAction && !annotation.flagged && (
